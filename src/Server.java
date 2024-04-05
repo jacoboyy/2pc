@@ -1,10 +1,11 @@
 /* Skeleton code for Server */
 import java.io.*;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class Server implements ProjectLib.MessageHandling, ProjectLib.CommitServing {
 	public int nextId;
-	public HashMap<Integer, CommitInfo> commitInfo;
+	public ConcurrentHashMap<Integer, CommitInfo> commitInfo;
 
 	public static class CommitInfo {
 		public byte[] img;
@@ -21,23 +22,23 @@ public class Server implements ProjectLib.MessageHandling, ProjectLib.CommitServ
 			commit = true;
 		}
 
-		public void updatePending(int num) {
+		public synchronized void updatePending(int num) {
 			pendings = num;
 		}
 
-		public void decrPending() {
+		public synchronized void decrPending() {
 			pendings -= 1;
 		}
 
-		public void markAbort() {
+		public synchronized void markAbort() {
 			commit = false;
 		}
 
-		public boolean canCommit() {
+		public synchronized boolean canCommit() {
 			return commit;
 		}
 
-		public boolean allReceived() {
+		public synchronized boolean allReceived() {
 			return pendings == 0;
 		}
 	}
@@ -46,7 +47,7 @@ public class Server implements ProjectLib.MessageHandling, ProjectLib.CommitServ
 	
 	public Server() {
 		nextId = 0;
-		commitInfo = new HashMap<>();
+		commitInfo = new ConcurrentHashMap<>();
 	}
 
 	public int getNextId() {
@@ -82,7 +83,7 @@ public class Server implements ProjectLib.MessageHandling, ProjectLib.CommitServ
 			try {
 				String addr = entry.getKey();
 				// send
-				System.out.println("Server sent prepare message for " + cid + " to " + addr);
+				System.out.println("Server sent prepare message for commit " + cid + " to " + addr + " asking resources " + entry.getValue());
 				String[] filesArr = listToArray(entry.getValue());
 				MessageBody body = new MessageBody(cid, img, filesArr);
 				ProjectLib.Message msg = new ProjectLib.Message(addr, Serializer.serialize(body));
@@ -98,17 +99,19 @@ public class Server implements ProjectLib.MessageHandling, ProjectLib.CommitServ
 		try {
 			MessageBody body = Serializer.deserialize(msg.body);
 			int cid = body.cid;
-			System.out.println("Server receive response from " + addr + " for " + cid);
+			System.out.println("Server receive response from " + addr + " for commit " + cid);
 			boolean decision = body.decision;
-			CommitInfo info = commitInfo.get(cid);
-			if (!decision)
-				info.markAbort();
-			info.decrPending();
-			if (info.allReceived()) {
-				boolean result = info.canCommit();
-				if (result)
-					writeFile(info.filename, info.img);
-				commit(cid, info.userToImages, result);
+			synchronized (commitInfo) {
+				CommitInfo info = commitInfo.get(cid);
+				if (!decision)
+					info.markAbort();
+				info.decrPending();
+				if (info.allReceived()) {
+					boolean result = info.canCommit();
+					if (result)
+						writeFile(info.filename, info.img);
+					commit(cid, info.userToImages, result);
+				}
 			}
 		} catch (Exception e) {
 			e.printStackTrace();

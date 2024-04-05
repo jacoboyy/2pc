@@ -1,17 +1,15 @@
 /* Skeleton code for UserNode */
 import java.util.*;
 import java.io.*;
-import java.util.concurrent.locks.*;
-
 
 public class UserNode implements ProjectLib.MessageHandling {
 	public final String myId;
-	public HashMap<String, Lock> fileLocks;
+	public HashSet<String> locked;
 	public ProjectLib userPL;
 
 	public UserNode( String id ) {
 		myId = id;
-		fileLocks = new HashMap<>();
+		locked = new HashSet<>();
 	}
 
 	public void assignPL(ProjectLib PL) {
@@ -19,19 +17,14 @@ public class UserNode implements ProjectLib.MessageHandling {
 	}
 
 	public MessageBody prepare(int cid, byte[] img, String[] sources) {
-		System.out.println(myId + " prepare response for " + cid + " starts");
+		System.out.println(myId + " prepare response for commit " + cid + " starts");
 		boolean decision = true;
-		// grab locks
-		for (String source: sources) {
-			if (!fileLocks.containsKey(source))
-				fileLocks.put(source, new ReentrantLock());
-			fileLocks.get(source).lock();
-		}
-		// check if file exists
+		// grab locks and check file exitance
 		for (String source: sources) {
 			File file = new File(source);
-			if (!file.exists())
+			if (!file.exists() || locked.contains(source))
 				decision = false;
+			locked.add(source);
 		}
 		// ask user
 		if (decision)
@@ -46,7 +39,8 @@ public class UserNode implements ProjectLib.MessageHandling {
 		for (String source: sources) {
 			File file = new File(source);
 			file.delete();
-			fileLocks.get(source).unlock();
+			System.out.println("commit " + cid + " deleted file " + source + " on " + myId);
+			locked.remove(source);
 		}
 	}
 
@@ -54,7 +48,7 @@ public class UserNode implements ProjectLib.MessageHandling {
 		System.out.println(myId + " abort " + cid + " starts");
 		// unlock resources
 		for (String source: sources)
-			fileLocks.get(source).unlock();
+			locked.remove(source);
 	}
 
 	public boolean deliverMessage( ProjectLib.Message msg ) {
