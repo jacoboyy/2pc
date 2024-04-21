@@ -5,8 +5,12 @@ all: Server.class UserNode.class
 
 .PHONY: format
 format:
-	# clang-format all the source code files
-	find *.java *.cpp | sed 's| |\\ |g' | xargs clang-format -style=google -i
+	find *.java | sed 's| |\\ |g' | xargs clang-format -style=google -i
+
+.PHONY: submit
+submit:
+	tar cvzf ../mysolution.tgz Coordinator.java CoordinatorEntry.java Decision.java Makefile MessageBody.java Server.java Slave.java SlaveEntry.java Stage.java UserNode.java
 
 clean:
 	rm -f *.class
+	rm -f ../mysolution.tgz

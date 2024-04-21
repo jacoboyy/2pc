@@ -1,4 +1,3 @@
-// define message format
 import java.io.*;
 
 public class MessageBody implements Serializable {
@@ -6,7 +5,8 @@ public class MessageBody implements Serializable {
   public byte[] img; // image contents
   public String[] sources; // image sources
   public boolean isPrepare; // true for prepare stage, false for commit stage
-  public boolean decision; // commit decision
+  public boolean vote; // vote from user
+  public Decision decision; // commit decision
 
   // prepare message from server to users
   public MessageBody(int cid, byte[] img, String[] sources) {
@@ -16,17 +16,47 @@ public class MessageBody implements Serializable {
     this.sources = sources;
   }
 
-  // commit/abort message from server to users
-  public MessageBody(int cid, String[] sources, boolean decision) {
+  // commit stage message from server to users
+  public MessageBody(int cid, String[] sources, Decision decision) {
     this.cid = cid;
     this.isPrepare = false;
     this.sources = sources;
     this.decision = decision;
   }
 
-  // prepare response from users to server
-  public MessageBody(int cid, boolean decision) {
+  // vote from users to server
+  public MessageBody(int cid, boolean vote) {
     this.cid = cid;
-    this.decision = decision;
+    this.vote = vote;
+    this.isPrepare = true;
+  }
+
+  // ack from users to server
+  public MessageBody(int cid) {
+    this.cid = cid;
+    this.isPrepare = false;
+  }
+
+  public void sendMessageBody(ProjectLib PL, String dest) {
+    try (ByteArrayOutputStream b = new ByteArrayOutputStream();
+         ObjectOutputStream o = new ObjectOutputStream(b)) {
+      o.writeObject(this);
+      o.flush();
+      ProjectLib.Message msg = new ProjectLib.Message(dest, b.toByteArray());
+      PL.sendMessage(msg);
+    } catch (Exception e) {
+      e.printStackTrace();
+    }
+  }
+
+  public static MessageBody deserialize(byte[] bytes) {
+    MessageBody body = null;
+    try (ByteArrayInputStream b = new ByteArrayInputStream(bytes);
+         ObjectInputStream o = new ObjectInputStream(b)) {
+      body = (MessageBody) o.readObject();
+    } catch (Exception e) {
+      e.printStackTrace();
+    }
+    return body;
   }
 }
