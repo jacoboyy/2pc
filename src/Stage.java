@@ -1,3 +1,3 @@
 import java.io.Serializable;
 
-public enum Stage implements Serializable { STAGE_I, STAGE_II, END }
+public enum Stage implements Serializable { PROPOSE, COMMIT, END }

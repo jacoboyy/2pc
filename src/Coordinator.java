@@ -1,4 +1,10 @@
-import java.io.*;
+/*
+ * @file   Coordinator.java
+ * @author Tengda Wang <tengdaw@andrew.cmu.edu>
+ * @brief  
+ */
+
+import java.io.Serializable;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class Coordinator implements Serializable {

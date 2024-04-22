@@ -9,7 +9,7 @@ format:
 
 .PHONY: submit
 submit:
-	tar cvzf ../mysolution.tgz Coordinator.java CoordinatorEntry.java Decision.java Makefile MessageBody.java Server.java Slave.java SlaveEntry.java Stage.java UserNode.java
+	tar cvzf ../mysolution.tgz Makefile *.java
 
 clean:
 	rm -f *.class
