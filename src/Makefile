@@ -9,7 +9,7 @@ format:
 
 .PHONY: submit
 submit:
-	tar cvzf ../mysolution.tgz Makefile *.java
+	tar cvzf ../mysolution.tgz Makefile *.java *.pdf
 
 clean:
 	rm -f *.class
