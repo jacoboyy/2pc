@@ -1,7 +1,9 @@
 /*
  * @file   Server.java
  * @author Tengda Wang <tengdaw@andrew.cmu.edu>
- * @brief
+ *
+ * A server that coordinate and perform two-phase-commits on candiate collage images. It is robust
+ * to message lost and node failures, and able to process multiple commits concurrently.
  */
 
 import java.io.*;
@@ -10,30 +12,28 @@ import java.util.*;
 import java.util.concurrent.*;
 
 public class Server implements ProjectLib.MessageHandling, ProjectLib.CommitServing {
-  public static final long COOLDOWN = 1500;
-  public static final String LOG = "server_WAL";
-  public Coordinator coordinator;
-  public ConcurrentLinkedQueue<MessageBody> queue;
-  public static ProjectLib PL;
-  public boolean ready;
+  public static final long COOLDOWN = 1500; // interval of garbage collection thread
+  public static final String LOG = "server_WAL"; // log file name
+
+  public Coordinator coordinator; // log coordinator
+  public ConcurrentLinkedQueue<MessageBody>
+      queue; // global queue to store all messages sent in order to track timeout
+  public static ProjectLib PL; // static ProjectLib object to send/receive message
+  public boolean ready; // whether the recovery phase is completed
 
   public Server() {
     queue = new ConcurrentLinkedQueue<>();
     ready = false;
   }
 
-  /**
-   * Static helper function to convert ArrayList<String> to string array
-   */
+  /** Static helper function to convert ArrayList<String> to string array */
   public static String[] listToArray(ArrayList<String> list) {
     String[] result = new String[list.size()];
     result = list.toArray(result);
     return result;
   }
 
-  /**
-   * Flush log to disk
-   */
+  /** Flush write ahead log to disk */
   public void flush() {
     try (FileOutputStream f = new FileOutputStream(LOG, false);
          ObjectOutputStream o = new ObjectOutputStream(f)) {
@@ -45,9 +45,7 @@ public class Server implements ProjectLib.MessageHandling, ProjectLib.CommitServ
     }
   }
 
-  /**
-   * Recover log from disk
-   */
+  /** Load and replay logs from disk to recover system stage prioir to the node failure */
   public void recover() {
     File log = new File(LOG);
     if (!log.exists()) {
@@ -60,7 +58,7 @@ public class Server implements ProjectLib.MessageHandling, ProjectLib.CommitServ
           if (entry.stage == Stage.PROPOSE) {
             // abort uncommited transactions
             entry.canCommit = false;
-            entry.endStageI();
+            entry.endPrepareStage();
             flush();
             commit(entry);
           } else if (entry.stage == Stage.COMMIT) {
@@ -75,6 +73,7 @@ public class Server implements ProjectLib.MessageHandling, ProjectLib.CommitServ
     ready = true;
   }
 
+  /** Start or resume the prepare phase of a commit */
   public void prepare(CoordinatorEntry entry) {
     // send proposal to all participants
     for (String addr : entry.pendings) {
@@ -87,6 +86,7 @@ public class Server implements ProjectLib.MessageHandling, ProjectLib.CommitServ
     }
   }
 
+  /** Start or resume the second stage of a commit*/
   public void commit(CoordinatorEntry entry) {
     // send commit message to all participants
     for (String addr : entry.pendings) {
@@ -100,12 +100,15 @@ public class Server implements ProjectLib.MessageHandling, ProjectLib.CommitServ
     }
   }
 
+  /**
+   * Handle a vote to a commit from a user.
+   * @param addr  sender of the message
+   * @param msg   the vote message
+   */
   public void handleVote(String addr, MessageBody msg) {
     CoordinatorEntry entry = coordinator.getEntry(msg.cid);
-    assert (msg.isPrepare);
     if (entry.stage == Stage.END) {
-      // transaction ended, discard vote
-      return;
+      return; // transaction ended, discard vote
     } else if (entry.stage == Stage.COMMIT) {
       // resend decision for that user node
       ArrayList<String> files = entry.userToFiles.get(addr);
@@ -119,11 +122,12 @@ public class Server implements ProjectLib.MessageHandling, ProjectLib.CommitServ
     }
     boolean vote = msg.vote;
     if (!vote)
-      entry.canCommit = false;
+      entry.canCommit = false; // all users must vote yes in order to commit
     entry.pendings.remove(addr);
     flush();
+    // all votes are received, move to the second phase
     if (entry.pendings.isEmpty()) {
-      entry.endStageI();
+      entry.endPrepareStage();
       if (entry.canCommit)
         writeFile(entry.filename, entry.img);
       flush();
@@ -131,34 +135,46 @@ public class Server implements ProjectLib.MessageHandling, ProjectLib.CommitServ
     }
   }
 
+  /**
+   * Handle an ACK message from a user.
+   * @param addr  sender of the message
+   * @param msg   the ack message
+   */
   public void handleACK(String addr, MessageBody msg) {
     CoordinatorEntry entry = coordinator.getEntry(msg.cid);
     if (entry.stage == Stage.END) {
-      // transaction ended, discard ack
-      return;
+      return; // transaction ended, discard ACK
     }
-    assert (entry.stage == Stage.COMMIT);
     entry.pendings.remove(addr);
     flush();
+    // all acks received: mark end of a commit
     if (entry.pendings.isEmpty()) {
-      entry.endStageII();
+      entry.endCommitStage();
       flush();
     }
   }
 
+  /**
+   * Callback to asynchronously receive reply messages from users and perform operations
+   * accordingly
+   */
   public synchronized boolean deliverMessage(ProjectLib.Message msg) {
     while (!ready) {
+      // wait for log to be loaded first
     }
     String addr = msg.addr;
     MessageBody body = MessageBody.deserialize(msg.body);
     assert (body != null);
     if (body.isPrepare)
-      handleVote(addr, body);
+      handleVote(addr, body); // vote for a commit
     else
-      handleACK(addr, body);
+      handleACK(addr, body); // ack to the commit
     return true;
   }
 
+  /**
+   * Helper function to create a image file specified by the filename and write the collage image
+   */
   public void writeFile(String filename, byte[] img) {
     try {
       FileOutputStream fos = new FileOutputStream(filename);
@@ -169,12 +185,17 @@ public class Server implements ProjectLib.MessageHandling, ProjectLib.CommitServ
     }
   }
 
+  /**
+   * Server callback when new collage is to be committed. A call to this function should start a
+   * two-phase commit operation.
+   */
   public void startCommit(String filename, byte[] img, String[] sources) {
     CoordinatorEntry entry = coordinator.addEntry(filename, img, sources);
     flush();
     prepare(entry);
   }
 
+  /** Check timeouted messages and perform necessary operations on it */
   public void checkTimeout() {
     synchronized (queue) {
       ArrayList<MessageBody> newMessages = new ArrayList<>();
@@ -187,7 +208,7 @@ public class Server implements ProjectLib.MessageHandling, ProjectLib.CommitServ
         if (msg.isPrepare && entry.stage == Stage.PROPOSE) {
           // prepare stage timeout, treat as implicit abort
           entry.canCommit = false;
-          entry.endStageI();
+          entry.endPrepareStage();
           flush();
           commit(entry);
         } else if (!msg.isPrepare && entry.stage == Stage.COMMIT) {
@@ -210,7 +231,7 @@ public class Server implements ProjectLib.MessageHandling, ProjectLib.CommitServ
     Server srv = new Server();
     PL = new ProjectLib(Integer.parseInt(args[0]), srv, srv);
     srv.recover();
-    // periodically check for timeout
+    // periodically invoke timeout checking
     while (true) {
       Thread.sleep(COOLDOWN);
       srv.checkTimeout();

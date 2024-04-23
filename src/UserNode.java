@@ -1,7 +1,11 @@
 /*
  * @file   UserNode.java
  * @author Tengda Wang <tengdaw@andrew.cmu.edu>
- * @brief
+ *
+ * Implementation of a user node that participates in the two-phase commit started by the server. It
+ * can approve or disapprove a commit proposal from the server, send acknowledgement messages back
+ * to the server, and perform necessary operations on the related resources in response to a commit
+ * (e.g. resource locking and deletion).
  */
 
 import java.io.*;
@@ -19,9 +23,7 @@ public class UserNode implements ProjectLib.MessageHandling {
     this.ready = false;
   }
 
-  /**
-   * Flush log to disk
-   */
+  /** flush log to disk */
   public void flush() {
     try (FileOutputStream f = new FileOutputStream(LOG, false);
          ObjectOutputStream o = new ObjectOutputStream(f)) {
@@ -33,9 +35,7 @@ public class UserNode implements ProjectLib.MessageHandling {
     }
   }
 
-  /**
-   * load log from disk during startup or recovery
-   */
+  /** load log from disk during start-up or recovery to restore state before node failure*/
   public void recover() {
     File log = new File(LOG);
     if (!log.exists()) {
@@ -52,9 +52,7 @@ public class UserNode implements ProjectLib.MessageHandling {
     ready = true;
   }
 
-  /**
-   * Handle a proposal from the server
-   */
+  /** Handle a proposal from the server */
   public void handlePrepare(MessageBody msg) {
     // resend saved decision if already processed
     SlaveEntry prevEntry = slave.getEntry(msg.cid);
@@ -88,9 +86,7 @@ public class UserNode implements ProjectLib.MessageHandling {
     replyBody.sendMessageBody(PL);
   }
 
-  /**
-   * Handle a commit message from the server
-   */
+  /** handle a commit message from the server */
   public void handleCommit(MessageBody msg) {
     Decision decision = msg.decision;
     assert (!msg.isPrepare);
@@ -111,13 +107,13 @@ public class UserNode implements ProjectLib.MessageHandling {
     }
 
     if (entry.decision != Decision.UNKNOWN) {
-      // resend ack
+      // message already answered before, resend ack
       MessageBody replyBody = new MessageBody(msg.cid);
       replyBody.sendMessageBody(PL);
       return;
     }
 
-    // update decision in log
+    // otherwise, update decision in log
     assert (entry.decision == Decision.UNKNOWN);
     entry.updateDecision(decision);
     flush();
@@ -135,6 +131,10 @@ public class UserNode implements ProjectLib.MessageHandling {
     replyBody.sendMessageBody(PL);
   }
 
+  /**
+   * Callback to asynchronously receive messages from the server and perform operations
+   * accordingly
+   */
   public synchronized boolean deliverMessage(ProjectLib.Message msg) {
     while (!ready) {
       // wait for log to be loaded first
@@ -154,6 +154,7 @@ public class UserNode implements ProjectLib.MessageHandling {
       throw new Exception("Need 2 args: <port> <id>");
     UserNode UN = new UserNode(args[1]);
     PL = new ProjectLib(Integer.parseInt(args[0]), args[1], UN);
+    // alwasy attempt to load log first
     UN.recover();
   }
 }
